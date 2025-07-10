@@ -3,7 +3,8 @@
 [![Build](https://img.shields.io/badge/GitHub%20Actions-Build-181717?logo=github&logoColor=white&style=flat-square)](https://github.com/Numbersf/Action-Build/actions/workflows/Build%20SukiSU%20Ultra%20OnePlus.yml) [![Channel](https://img.shields.io/badge/Follow-Telegram-blue.svg?logo=telegram)](https://t.me/taichi91) [![OnePlus Kernel Manifest](https://img.shields.io/badge/OnePlus%20Kernel%20Manifest-EB0029?logo=oneplus&logoColor=white&style=flat-square)](https://github.com/OnePlusOSS/kernel_manifest) [![Coolapk](https://img.shields.io/badge/Follow-Coolapk-3DDC84?style=flat-square&logo=android&logoColor=white)](http://www.coolapk.com/u/28259173)
  
 # Action-Build
-**```Build OnePlus SukiSU Ultra KPM Kernel```**
+**```Build All OnePlus Devices SukiSU Ultra Kernel```**
+>更高效 更全面 更快速 更稳定
  
 <details>
 <summary><strong>点击查看如何fork项目</strong></summary>
@@ -88,7 +89,7 @@
 >| `大部分机型` | `1st:19min ~ 35min 2nd:9min ~ 19min` | `42min`|
 >| `OnePlus 11-A13、A14`| `1st:1h8min ~ 1h17min 2nd:50min ~ 1h10min` | `1h23min` |
 >
->使用ccache第一次会减速
+> >使用ccache第一次会减速
 > </details>
 >
 > <details>
@@ -115,23 +116,36 @@
 >
 >如果你的机型是``sm8750``,并且曾经使用了官方脚本构建,而现在需要使用``Fast Build(极速构建)``,请先还原``dtbo.img、system_dlkm(.erofs).img、vendor_dlkm.img、vendor_boot.img``**否则会无法开机!**  
 >
->如果你开启了``ZRAM``算法,请在刷入``Anykernel3``重启**前**安装``ZRAM``模块,部分参数请自行调整。另外``5.10``内核暂不支持开启``ZRAM``算法,因为没有找到``zram.ko``路径  
+>如果你开启了``ZRAM``算法,请在刷入``Anykernel3``重启**前**安装``ZRAM``模块,部分参数请自行调整。另外``5.10``内核暂不支持开启``ZRAM``算法,因为没有找到``zram.ko``路径,但是生成的``Anykernel3``依旧可用  
 >
-
+>``OnePlus ace5``不支持开启风驰,较老的机型即使内核加入也无法使用,不要勉强  
+>
+ 
 ------
  
 # 开发中的功能
 - [ ] ccache支持AB更新模式
-- [ ] 不同分支的切换
 - 牙膏要一点一点挤，显卡要一刀一刀切，PPT要一张一张放，代码要一行一行写，更多功能及优化...敬请期待....
  
 # 更新日志
+>小的更新内容将被忽略 更多内容请参看提交
+ 
+--支持设置分支、自定义版本标识  
+```
+设置分支:你可以把susfs-main改成其他susfs-*分支,请按照SukiSU Ultra仓库频道名进行修改,一般来说你并不需要改这个
+自定义版本标识:
+将原先的提交hash改成自定义内容,不要太长
+v3.1.7-f5541e21@susfs-main
+↓
+v3.1.7-自定义内容@susfs-main
+设置分支和自定义版本标识中间用/(U+002F)隔开,不可删除
+```  
+--删除`file-map`及编译方式并由主工作流自行选择[@Bouteillepleine](https://github.com/Bouteillepleine)  
 --首发支持全机型、全编译方式自定义内核构建时间`UTS_VERSION`  
 --使用`ccache`加速工作流,仅开启极速构建`fast build`有效,第一次使用、重大更新、换`key`要重新生成`cache`,可能会降低速度  
 --首发适配`sm8750`的`setlocalversion`文件中`echo`新格式,修复自定义&随机伪官方后缀失效。现在,全机型、全编译方式完美支持此功能  
 --添加`TRUSTY_EXISTS`用于自动检测`6.6`内核是否内核源码存在缺陷,判断是否`sed`处理  
 --支持**部分机型**开启风驰驱动(自选是否开启),驱动来自[@HanKuCha](https://github.com/HanKuCha)  
---删除`input`中除机型配置文件`FEIL`以外的所有其他机型参数并递推到`feil-map`以支持更多选择  
 --当`ZRAM`开启时,自动下载并修改`ZRAM附加模块`,附加模块来自[@FURLC](https://github.com/FURLC)  
 --修复`ZRAM`无法使用或者打不开非系统应用的问题  
 --修复内核版本介于`5.15.0-5.15.123`之间官方脚本跑不出,极速编译结果有问题[@zzh20188](https://github.com/zzh20188)  
