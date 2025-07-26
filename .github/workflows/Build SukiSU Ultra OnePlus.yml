@@ -45,7 +45,7 @@ on:
           - NoN
       KSU_META:
         type: string
-        description: "分支名/自定义版本标识"
+        description: "分支名(不可留空)/自定义版本标识(留空不修改)"
         required: false
         default: "susfs-main/Numbersf"
       BUILD_TIME:
@@ -86,7 +86,7 @@ on:
 
 jobs:
   build:
-    name: ${{ github.event.inputs.FAST_BUILD == 'true' && ' [FAST]' || '' }}${{ github.event.inputs.SCHED == 'true' && ' [SCHED]' || '' }}${{ github.event.inputs.ZRAM == 'true' && ' [ZRAM]' || '' }}For ${{ github.event.inputs.FILE }} ${{ github.event.inputs.SUFFIX }}
+    name: ${{ github.event.inputs.FAST_BUILD == 'true' && ' [FAST]' || '' }}${{ github.event.inputs.SCHED == 'true' && ' [SCHED]' || '' }}${{ github.event.inputs.ZRAM == 'true' && ' [ZRAM]' || '' }}${{ github.event.inputs.KPM == 'true' && ' [KPM]' || '' }}For ${{ github.event.inputs.FILE }} ${{ github.event.inputs.SUFFIX }}
     runs-on: ubuntu-latest
     env:
       CCACHE_COMPILERCHECK: "%compiler% -dumpmachine; %compiler% -dumpversion"
@@ -172,6 +172,30 @@ jobs:
             echo "BUILD_METHOD=gki" >> $GITHUB_ENV
           fi
 
+      - name: Debug Show Selected Inputs
+        run: |
+          echo "-----------------------"
+          echo "Selected CPU: ${{ env.CPU }}"
+          echo "Selected CPUD: ${{ env.CPUD }}"
+          echo "Selected ANDROID_VERSION: ${{ env.ANDROID_VERSION }}"
+          echo "Selected KERNEL_VERSION: ${{ env.KERNEL_VERSION }}"
+          echo "Selected BUILD_METHOD: ${{ env.BUILD_METHOD }}"
+          echo "Selected FILE: ${{ github.event.inputs.FILE }}"
+          echo "Custom KSU_META: ${{ github.event.inputs.KSU_META }}"
+          echo "Custom BUILD_TIME: ${{ github.event.inputs.BUILD_TIME }}"
+          echo -n "BUILD_TIME Unicode: "
+          python3 -c "print(''.join(f'U+{ord(c):04X} ' for c in '''${{ github.event.inputs.BUILD_TIME }}'''))"
+          echo "Custom SUFFIX: ${{ github.event.inputs.SUFFIX }}"
+          echo -n "SUFFIX Unicode: "
+          python3 -c "print(''.join(f'U+{ord(c):04X} ' for c in '''${{ github.event.inputs.SUFFIX }}'''))"
+          echo "Selected SUSFS_CI: ${{ github.event.inputs.SUSFS_CI }}"
+          echo "Selected VFS: ${{ github.event.inputs.VFS }}"
+          echo "Selected KPM: ${{ github.event.inputs.KPM }}"
+          echo "Selected FAST_BUILD: ${{ github.event.inputs.FAST_BUILD }}"
+          echo "Selected SCHED: ${{ github.event.inputs.SCHED }}"
+          echo "Selected ZRAM: ${{ github.event.inputs.ZRAM }}"
+          echo "-----------------------"
+
       - name: Check Disk Space
         run: df -h
 
@@ -223,24 +247,6 @@ jobs:
           key: ${{ runner.os }}-apt-${{ hashFiles('.github/workflows/Build SukiSU Ultra OnePlus.yml') }}
           restore-keys: |
             ${{ runner.os }}-apt-
-
-      - name: Debug Show Selected Inputs
-        run: |
-          echo "Selected CPU: ${{ env.CPU }}"
-          echo "Selected CPUD: ${{ env.CPUD }}"
-          echo "Selected ANDROID_VERSION: ${{ env.ANDROID_VERSION }}"
-          echo "Selected KERNEL_VERSION: ${{ env.KERNEL_VERSION }}"
-          echo "Selected BUILD_METHOD: ${{ env.BUILD_METHOD }}"
-          echo "Selected FILE: ${{ github.event.inputs.FILE }}"
-          echo "Custom KSU_META: ${{ github.event.inputs.KSU_META }}"
-          echo "Custom BUILD_TIME: ${{ github.event.inputs.BUILD_TIME }}"
-          echo "Custom SUFFIX: ${{ github.event.inputs.SUFFIX }}"
-          echo "Selected SUSFS_CI: ${{ github.event.inputs.SUSFS_CI }}"
-          echo "Selected VFS: ${{ github.event.inputs.VFS }}"
-          echo "Selected KPM: ${{ github.event.inputs.KPM }}"
-          echo "Selected FAST_BUILD: ${{ github.event.inputs.FAST_BUILD }}"
-          echo "Selected SCHED: ${{ github.event.inputs.SCHED }}"
-          echo "Selected ZRAM: ${{ github.event.inputs.ZRAM }}"
 
       - name: Install Dependencies
         run: |
@@ -430,23 +436,28 @@ jobs:
 
           echo "KSU_API_VERSION=$KSU_API_VERSION" >> $GITHUB_ENV
 
-          VERSION_DEFINITIONS=$(cat << 'EOF'
-          define get_ksu_version_full
-          v$1-CUSTOM_TAG@BRANCH_NAME
-          endef
+          GIT_HASH=$(git rev-parse --short HEAD)
+          echo "GIT_HASH=$GIT_HASH"
 
-          KSU_VERSION_API := KSU_API_VERSION
-          KSU_VERSION_FULL := vKSU_API_VERSION-CUSTOM_TAG@BRANCH_NAME
-          EOF
-          )
-          VERSION_DEFINITIONS=$(echo "$VERSION_DEFINITIONS" | sed \
-            -e "s/CUSTOM_TAG/$CUSTOM_TAG/g" \
-            -e "s/BRANCH_NAME/$BRANCH_NAME/g" \
-            -e "s/KSU_API_VERSION/$KSU_API_VERSION/g")
+          if [[ -z "$CUSTOM_TAG" || "$CUSTOM_TAG" == "$BRANCH_NAME" ]]; then
+            VERSION_FULL="v$KSU_API_VERSION-$GIT_HASH@$BRANCH_NAME"
+          else
+            VERSION_FULL="v$KSU_API_VERSION-$CUSTOM_TAG@$BRANCH_NAME[$GIT_HASH]"
+          fi
 
           sed -i '/define get_ksu_version_full/,/endef/d' kernel/Makefile
           sed -i '/KSU_VERSION_API :=/d' kernel/Makefile
           sed -i '/KSU_VERSION_FULL :=/d' kernel/Makefile
+
+          VERSION_DEFINITIONS=$(cat <<EOF
+            define get_ksu_version_full
+            $VERSION_FULL
+            endef
+
+            KSU_VERSION_API := $KSU_API_VERSION
+            KSU_VERSION_FULL := $VERSION_FULL
+          EOF
+          )
 
           awk -v def="$VERSION_DEFINITIONS" '
             /REPO_OWNER :=/ {print; print def; inserted=1; next}
@@ -457,7 +468,7 @@ jobs:
           KSU_VERSION=$(expr $(git rev-list --count main 2>/dev/null || echo 13000) + 10700)
           echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
 
-          echo "::group:: 最终 Makefile 中版本信息及部分调试结果预览"
+          echo "::group::最终 Makefile 中版本信息及部分调试结果预览"
           grep -A10 "REPO_OWNER" kernel/Makefile
           grep "KSU_VERSION_FULL" kernel/Makefile
           echo "::endgroup::"
@@ -858,8 +869,29 @@ jobs:
         run: |
           set -e
           sudo apt install -y unzip
-          curl -s https://api.github.com/repos/FurLC/ZRAM-Module/releases/latest | \
-            grep "browser_download_url" | grep "ZRAM-Module-.*\.zip" | cut -d '"' -f 4 | xargs wget -N
+          echo "尝试获取 ZRAM 模块 zip 下载链接..."
+          retries=3
+          success=0
+          for i in $(seq 1 $retries); do
+            echo "第 $i 次尝试下载..."
+            download_url=$(curl -s https://api.github.com/repos/FurLC/ZRAM-Module/releases/latest | \
+              grep "browser_download_url" | grep "ZRAM-Module-.*\.zip" | cut -d '"' -f 4 | head -n 1)
+
+            if [ -n "$download_url" ]; then
+              echo "✅ 成功获取下载链接: $download_url"
+              wget -N "$download_url" && success=1 && break
+            else
+              echo "⚠️ 获取下载链接失败，等待 3 秒后重试..."
+              sleep 3
+            fi
+          done
+
+          if [ "$success" -ne 1 ]; then
+            echo "❌ 连续 $retries 次尝试后仍然无法获取 ZRAM 模块下载链接"
+            echo "upload=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           unzip "$(ls -t ZRAM-Module-*.zip | head -1)" -d ZRAM-Module
           target="./ZRAM-Module/zram/zram.ko"
           echo "查找 zram.ko 模块文件..."
@@ -876,7 +908,7 @@ jobs:
             zram_path=$(find "./kernel_workspace" -type f -name "zram.ko" | head -n 1)
           fi
           if [ -n "$zram_path" ] && [ -f "$zram_path" ]; then
-            echo " ZRAM module file finally located at: $zram_path "
+            echo "ZRAM module file finally located at: $zram_path"
             mkdir -p "$(dirname "$target")"
             if [ "$(realpath "$zram_path")" != "$(realpath "$target")" ]; then
               cp "$zram_path" "$target"
