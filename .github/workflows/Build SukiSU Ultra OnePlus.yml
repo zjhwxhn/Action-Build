@@ -35,6 +35,15 @@ on:
           - oneplus_13s
           - oneplus_pad_2_pro
           - oneplus_pad_3
+      HOOK:
+        type: choice
+        description: "钩子选择"
+        required: true
+        default: manual
+        options:
+          - kprobe
+          - manual
+          - tracepoint
       SUSFS_CI:
         type: choice
         description: "下载SUSFS模块调用方式"
@@ -62,11 +71,6 @@ on:
       FAST_BUILD:
         type: boolean
         description: "是否启用极速构建？"
-        required: true
-        default: true
-      VFS:
-        type: boolean
-        description: "是否启用手动钩子(VFS)？"
         required: true
         default: true
       KPM:
@@ -242,7 +246,7 @@ jobs:
           echo -n "SUFFIX Unicode: "
           python3 -c "print(''.join(f'U+{ord(c):04X} ' for c in '''${{ github.event.inputs.SUFFIX }}'''))"
           echo "Selected SUSFS_CI: ${{ github.event.inputs.SUSFS_CI }}"
-          echo "Selected VFS: ${{ github.event.inputs.VFS }}"
+          echo "Selected HOOK: ${{ github.event.inputs.HOOK }}"
           echo "Selected KPM: ${{ github.event.inputs.KPM }}"
           echo "Selected FAST_BUILD: ${{ github.event.inputs.FAST_BUILD }}"
           echo "Selected SCHED: ${{ github.event.inputs.SCHED }}"
@@ -547,7 +551,7 @@ jobs:
             fi
             echo "trusty_exists=$TRUSTY_EXISTS" >> $GITHUB_OUTPUT
 
-            if [[ "$TRUSTY_EXISTS" == "false" ]]; then
+            if [[ "$TRUSTY_EXISTS" == "false" && "$file" != "oneplus_pad_2_pro" && "$file" != "oneplus_pad_3" ]]; then
               echo "修复内核版本6.6部分机型缺失Trusty OS导致的susfs的报错"
               sed -i 's/-32,12 +32,38/-32,11 +32,37/g' 50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${KERNEL_VERSION}.patch
               sed -i '/#include <trace\/hooks\/fs.h>/d' 50_add_susfs_in_gki-${{ env.KANDROID_VERSION }}-${KERNEL_VERSION}.patch
@@ -576,14 +580,20 @@ jobs:
           patch -p1 -F 3 < hmbird_patch.patch
           echo "OGKI转换GKI_patch完成"
 
-      - name: Apply VFS
-        if: ${{ github.event.inputs.VFS == 'true' }}
+      - name: Apply HOOK
         run: |
           cd kernel_workspace/kernel_platform/common
+          if [ "${{ github.event.inputs.HOOK }}" = "kprobe" ]; then
+          echo "调用 kprobe 钩子"
+          elif [ "${{ github.event.inputs.HOOK }}" = "manual" ]; then
           cp ../../SukiSU_patch/hooks/syscall_hooks.patch ./
-          echo "正在打vfs补丁"
+          echo "调用 manual 钩子"
           patch -p1 -F 3 < syscall_hooks.patch
-          echo "vfs_patch完成"
+          elif [ "${{ github.event.inputs.HOOK }}" = "tracepoint" ]; then
+          cp ../../SukiSU_patch/hooks/tracepoint_hooks.patch ./
+          echo "调用 tracepoint 钩子"
+          patch -p1 -F 3 < tracepoint_hooks.patch
+          fi
 
       - name: Apply ZRAM
         if: ${{ github.event.inputs.ZRAM == 'true' }}
@@ -597,6 +607,77 @@ jobs:
           echo "正在打lz4k_oplus补丁"
           patch -p1 -F 3 < lz4k_oplus.patch || true
           echo 'lz4k_oplus_patch完成'
+
+      - name: Upgrade LZ4
+        run: |
+          LZ4_VERSION="1.10.0"
+          LZ4_DOWNLOAD_URL="https://github.com/lz4/lz4/archive/refs/tags/v${LZ4_VERSION}.tar.gz"
+          cd kernel_workspace/kernel_platform/common
+          mkdir -p lz4_temp && cd lz4_temp
+          echo "下载LZ4 ${LZ4_VERSION}源码..."
+          curl -Ls "${LZ4_DOWNLOAD_URL}" -o lz4.tar.gz
+          tar -zxf lz4.tar.gz --strip-components=1
+
+          # 复制文件并使用独立命名，避免与LZ4K冲突
+          echo "复制LZ4文件到内核目录..."
+          # 源码文件（添加"lz4v2_"前缀）
+          cp lib/lz4.c ../lib/lz4v2_core.c
+          cp lib/lz4.h ../lib/lz4v2_core.h
+          cp lib/lz4hc.c ../lib/lz4v2_hc.c
+          cp lib/lz4hc.h ../lib/lz4v2_hc.h
+          # 头文件（放在独立路径）
+          mkdir -p ../include/linux/lz4v2
+          cp lib/lz4.h ../include/linux/lz4v2/lz4.h
+          cp lib/lz4hc.h ../include/linux/lz4v2/lz4hc.h
+
+          # 全局重命名函数和宏（彻底隔离命名空间）
+          echo "重命名符号以避免冲突..."
+          # 核心压缩函数重命名
+          sed -i 's/LZ4_compress_default/lz4v2_compress_default/g' ../lib/lz4v2_core.c ../lib/lz4v2_core.h
+          sed -i 's/LZ4_decompress_safe/lz4v2_decompress_safe/g' ../lib/lz4v2_core.c ../lib/lz4v2_core.h
+          # HC高压缩函数重命名
+          sed -i 's/LZ4_compress_HC/lz4v2_compress_HC/g' ../lib/lz4v2_hc.c ../lib/lz4v2_hc.h
+          # 内部宏和辅助函数重命名
+          sed -i 's/LZ4_/LZ4V2_/g' ../lib/lz4v2_core.c ../lib/lz4v2_core.h ../lib/lz4v2_hc.c ../lib/lz4v2_hc.h
+          
+          # 添加内核兼容性适配
+          echo "添加内核适配代码..."
+          # 引入内核必要头文件
+          sed -i '1i#include <linux/types.h>' ../lib/lz4v2_core.c
+          sed -i '2i#include <linux/kernel.h>' ../lib/lz4v2_core.c
+          sed -i '3i#include <linux/module.h>' ../lib/lz4v2_core.c
+          # HC文件同样处理
+          sed -i '1i#include <linux/types.h>' ../lib/lz4v2_hc.c
+          sed -i '2i#include <linux/kernel.h>' ../lib/lz4v2_hc.c
+          sed -i '3i#include <linux/module.h>' ../lib/lz4v2_hc.c
+
+          # 添加模块声明（符合内核规范）
+          echo "添加模块元数据..."
+          cat >> ../lib/lz4v2_core.c << 'EOF'
+          MODULE_LICENSE("GPL");
+          MODULE_DESCRIPTION("LZ4 1.10.0 Compression (v2)");
+          MODULE_AUTHOR("LZ4 Project");
+          EXPORT_SYMBOL(lz4v2_compress_default);
+          EXPORT_SYMBOL(lz4v2_decompress_safe);
+          EOF
+
+          cat >> ../lib/lz4v2_hc.c << 'EOF'
+          MODULE_LICENSE("GPL");
+          MODULE_DESCRIPTION("LZ4HC 1.10.0 Compression (v2)");
+          MODULE_AUTHOR("LZ4 Project");
+          EXPORT_SYMBOL(lz4v2_compress_HC);
+          EOF
+
+          # 更新Makefile确保编译（独立于LZ4K）
+          echo "更新Makefile配置..."
+          if ! grep -q "lz4v2_core.o" ../lib/Makefile; then
+            echo "obj-\$(CONFIG_LZ4V2_COMPRESS) += lz4v2_core.o" >> ../lib/Makefile
+            echo "obj-\$(CONFIG_LZ4V2_COMPRESS) += lz4v2_hc.o" >> ../lib/Makefile
+          fi
+
+          # 清理临时文件
+          cd .. && rm -rf lz4_temp
+          echo "LZ4 ${LZ4_VERSION}集成完成（与LZ4K兼容）"
 
       # 配置信息,带*为附加项目,具有一定危险性和不确定性
       - name: Add Configuration Settings
@@ -613,13 +694,17 @@ jobs:
             echo "CONFIG_KPM=y" >> "$CONFIG_FILE"
           fi
 
-          # VFS配置
-          if [ "${{ github.event.inputs.VFS }}" = "true" ]; then
-            echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> "$CONFIG_FILE"
-            echo "CONFIG_KSU_MANUAL_HOOK=y" >> "$CONFIG_FILE"
-          else
+          # HOOK配置
+          if [ "${{ github.event.inputs.HOOK }}" = "kprobe" ]; then
             echo "CONFIG_KSU_SUSFS_SUS_SU=y" >> "$CONFIG_FILE"
             echo "CONFIG_KPROBES=y" >> "$CONFIG_FILE"
+            echo "CONFIG_KSU_KPROBES_HOOK=y" >> "$CONFIG_FILE"
+          elif [ "${{ github.event.inputs.HOOK }}" = "manual" ]; then
+            echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> "$CONFIG_FILE"
+            echo "CONFIG_KSU_MANUAL_HOOK=y" >> "$CONFIG_FILE"
+          elif [ "${{ github.event.inputs.HOOK }}" = "tracepoint" ]; then
+            echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> "$CONFIG_FILE"
+            echo "CONFIG_KSU_TRACEPOINT_HOOK=y" >> "$CONFIG_FILE" 
           fi
 
           # SUSFS配置
@@ -665,6 +750,14 @@ jobs:
             echo "CONFIG_CRYPTO_842=y" >> "$CONFIG_FILE"
             echo "CONFIG_CRYPTO_LZ4K_OPLUS=y" >> "$CONFIG_FILE"
             echo "CONFIG_ZRAM_WRITEBACK=y" >> "$CONFIG_FILE"
+          fi
+
+          # LZ4 1.10.0
+          echo "CONFIG_LZ4V2_COMPRESS=y" >> "$CONFIG_FILE"
+          echo "CONFIG_LZ4V2_HC=y" >> "$CONFIG_FILE"
+          echo "CONFIG_LZ4V2_DEBUG=n" >> "$CONFIG_FILE"
+          if [ "${{ github.event.inputs.ZRAM }}" = "true" ]; then
+            echo "CONFIG_ZRAM_LZ4V2=y" >> "$CONFIG_FILE"
           fi
 
           # 移除构建审查
@@ -746,6 +839,9 @@ jobs:
           export CC="ccache clang"
           sudo apt install -y libelf-dev ccache
           cd kernel_workspace/kernel_platform/common
+          # 强制修改 SUBLEVEL，默认关闭
+          # sed -i 's/^SUBLEVEL[[:space:]]*=[[:space:]]*.*/SUBLEVEL = 99/' Makefile
+
           MAKE_ARGS="LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
             RUSTC=../../prebuilts/rust/linux-x86/1.73.0b/bin/rustc \
             PAHOLE=../../prebuilts/kernel-build-tools/linux-x86/bin/pahole \
@@ -761,6 +857,9 @@ jobs:
         if: ${{ github.event.inputs.FAST_BUILD == 'false' || steps.fast_build.outputs.fallback == 'true' }}
         run: |
           cd kernel_workspace
+          # 强制修改 SUBLEVEL，默认关闭
+          # sed -i 's/^SUBLEVEL[[:space:]]*=[[:space:]]*.*/SUBLEVEL = 99/' kernel_platform/common/Makefile
+
           if [ -f ./kernel_platform/build_with_bazel.py ]; then
             ./kernel_platform/oplus/bazel/oplus_modules_variant.sh ${{ env.CPUD }} ${{ env.BUILD_METHOD }}
             ./kernel_platform/build_with_bazel.py --lto=thin -t ${{ env.CPUD }} ${{ env.BUILD_METHOD }}
@@ -875,7 +974,7 @@ jobs:
       - name: Set zip Suffix
         id: suffix
         run: |
-          echo "value=${{ github.event.inputs.VFS == 'true' && '_VFS' || '' }}${{ github.event.inputs.ZRAM == 'true' && '_LZ4KD' || '' }}${{ github.event.inputs.KPM == 'true' && '_KPM' || '' }}${{ github.event.inputs.SCHED== 'true' && '_SCHED' || '' }}" >> $GITHUB_OUTPUT
+          echo "value=${{ github.event.inputs.ZRAM == 'true' && '_LZ4KD' || '' }}${{ github.event.inputs.KPM == 'true' && '_KPM' || '' }}${{ github.event.inputs.HOOK == 'kprobe' && '_KP' || github.event.inputs.HOOK == 'manual' && '_VFS' || github.event.inputs.HOOK == 'tracepoint' && '_TP' || '' }}${{ github.event.inputs.SCHED== 'true' && '_SCHED' || '' }}" >> $GITHUB_OUTPUT
 
       - name: Upload AnyKernel3
         uses: actions/upload-artifact@v4
